@@ -180,6 +180,55 @@ func TestSchemaMatch_Headers(t *testing.T) {
 	}
 }
 
+func TestSchemaMatch_HeadersResultIncludesRecordedHeaders(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	tc := &models.TestCase{
+		Name: "schema-header-report",
+		HTTPResp: models.HTTPResp{
+			StatusCode: 200,
+			Header: map[string]string{
+				"Content-Type": "application/json",
+				"X-Required":   "true",
+			},
+			Body: `{}`,
+		},
+	}
+	actualResp := &models.HTTPResp{
+		StatusCode: 200,
+		Header: map[string]string{
+			"Content-Type": "application/json",
+		},
+		Body: `{}`,
+	}
+
+	got, result := MatchSchema(tc, actualResp, logger)
+	if got {
+		t.Fatalf("MatchSchema() = true, want false for missing recorded header")
+	}
+	if len(result.HeadersResult) != len(tc.HTTPResp.Header) {
+		t.Fatalf("len(HeadersResult) = %d, want %d; got %+v",
+			len(result.HeadersResult), len(tc.HTTPResp.Header), result.HeadersResult)
+	}
+
+	var sawContentType, sawMissingRequired bool
+	for _, header := range result.HeadersResult {
+		switch header.Expected.Key {
+		case "Content-Type":
+			sawContentType = header.Normal &&
+				len(header.Actual.Value) == 1 &&
+				header.Actual.Value[0] == "application/json"
+		case "X-Required":
+			sawMissingRequired = !header.Normal && len(header.Actual.Value) == 0
+		}
+	}
+	if !sawContentType {
+		t.Fatalf("HeadersResult did not include matching Content-Type entry: %+v", result.HeadersResult)
+	}
+	if !sawMissingRequired {
+		t.Fatalf("HeadersResult did not include missing X-Required entry: %+v", result.HeadersResult)
+	}
+}
+
 func TestUserVerification_SchemaMatch(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
