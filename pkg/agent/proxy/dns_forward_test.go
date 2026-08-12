@@ -482,6 +482,65 @@ func TestResolveUncachedDNSResponse_TestMode_UpstreamSuccessPassesThrough(t *tes
 	}
 }
 
+func TestResolveUncachedDNSResponse_TestMode_UpstreamNODATA_RelayedAsIs(t *testing.T) {
+	const queryName = "postgres.default.svc.cluster.local."
+
+	addr, stop := startFakeUpstream(t, func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Rcode = dns.RcodeSuccess
+		m.Authoritative = true
+		m.Ns = append(m.Ns, &dns.SOA{
+			Hdr: dns.RR_Header{
+				Name:   "default.svc.cluster.local.",
+				Rrtype: dns.TypeSOA,
+				Class:  dns.ClassINET,
+				Ttl:    30,
+			},
+			Ns:      "ns.default.svc.cluster.local.",
+			Mbox:    "hostmaster.default.svc.cluster.local.",
+			Serial:  1,
+			Refresh: 30,
+			Retry:   15,
+			Expire:  60,
+			Minttl:  30,
+		})
+		_ = w.WriteMsg(m)
+	})
+	defer stop()
+
+	p := newProxyWithUpstream(t, addr, 2*time.Second)
+	emptyMgr := NewMockManager(nil, nil, zap.NewNop())
+	t.Cleanup(emptyMgr.Close)
+	p.mockManager = emptyMgr
+
+	q := dns.Question{Name: queryName, Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}
+	entry := p.resolveUncachedDNSResponse(q, models.MODE_TEST, true, time.Now(), nil)
+
+	if entry.Msg == nil {
+		t.Fatalf("expected upstream NODATA response, got nil Msg")
+	}
+	if !entry.FromUpstream {
+		t.Fatalf("entry.FromUpstream = false; expected true for relayed upstream NODATA")
+	}
+	if entry.Msg.Rcode != dns.RcodeSuccess {
+		t.Fatalf("Rcode = %d, want %d (NOERROR NODATA)", entry.Msg.Rcode, dns.RcodeSuccess)
+	}
+	if got := len(entry.Msg.Answer); got != 0 {
+		t.Fatalf("Answer len = %d, want 0 for NODATA; answers=%v", got, entry.Msg.Answer)
+	}
+	if got := len(entry.Msg.Ns); got != 1 {
+		t.Fatalf("authority len = %d, want upstream SOA preserved", got)
+	}
+	soa, ok := entry.Msg.Ns[0].(*dns.SOA)
+	if !ok {
+		t.Fatalf("authority RR = %T, want *dns.SOA", entry.Msg.Ns[0])
+	}
+	if soa.Hdr.Name != "default.svc.cluster.local." {
+		t.Fatalf("SOA name = %q, want upstream authority preserved", soa.Hdr.Name)
+	}
+}
+
 // TestCaptureDNSUpstream_ReadsResolvConf verifies the startup
 // capture reads a resolv.conf file and correctly filters
 // self-referential loopback entries (loopback at the proxy's own DNS
