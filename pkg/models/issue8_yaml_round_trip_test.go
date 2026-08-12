@@ -114,3 +114,42 @@ func TestHardwareAddrCellRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresV3CellYAMLUUIDBytesPreservesType(t *testing.T) {
+	cases := []struct {
+		name string
+		in   [16]uint8
+	}{
+		{"zero", [16]uint8{}},
+		{"value", [16]uint8{
+			0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x47, 0x88,
+			0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			row := PostgresV3Cells{NewValueCell(tc.in)}
+			body, err := yaml.Marshal(row)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if bytes.Contains(body, []byte("!pg/")) {
+				t.Errorf("emitted YAML carries !pg/ tag (breaks cross-version replay):\n%s", body)
+			}
+			var out PostgresV3Cells
+			if err := yaml.Unmarshal(body, &out); err != nil {
+				t.Fatalf("unmarshal: %v\n--YAML--\n%s", err, body)
+			}
+			if len(out) != 1 {
+				t.Fatalf("expected 1 cell, got %d", len(out))
+			}
+			got, ok := out[0].Value.([16]uint8)
+			if !ok {
+				t.Fatalf("Value is %T, want [16]uint8\n--YAML--\n%s", out[0].Value, body)
+			}
+			if got != tc.in {
+				t.Errorf("round-trip drift:\n got  %v\n want %v\n--YAML--\n%s", got, tc.in, body)
+			}
+		})
+	}
+}
