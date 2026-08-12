@@ -858,8 +858,8 @@ func TestIsTime_VariousFormats_808(t *testing.T) {
 
 // TestToHTTPHeader_WithTimeValue_909 verifies that the ToHTTPHeader function correctly
 // converts a map of strings to an http.Header object. It specifically checks that
-// header values recognized as timestamps are not split by commas, while other
-// comma-separated values are correctly split into slices.
+// header values recognized as timestamps are not split by commas. Other recorded
+// request headers should also stay folded so replay emits one wire header per key.
 func TestToHTTPHeader_WithTimeValue_909(t *testing.T) {
 	// Arrange
 	mockHeader := map[string]string{
@@ -874,8 +874,25 @@ func TestToHTTPHeader_WithTimeValue_909(t *testing.T) {
 	// Assert
 	require.NotNil(t, httpHeader)
 	assert.Equal(t, []string{"Tue, 17 Jan 2023 16:34:58 IST"}, httpHeader["Date"])
-	assert.Equal(t, []string{"value1", "value2"}, httpHeader["X-Custom-Header"])
+	assert.Equal(t, []string{"value1,value2"}, httpHeader["X-Custom-Header"])
 	assert.Equal(t, []string{"application/json"}, httpHeader["Content-Type"])
+}
+
+func TestToHTTPHeader_KeepsCommaSeparatedRequestHeaderValuesFolded(t *testing.T) {
+	mockHeader := map[string]string{
+		"Accept":          "application/json, text/plain, */*",
+		"Accept-Encoding": "gzip, compress, deflate, br",
+		"Baggage":         "trace-id=abc,user-key=def,env=test",
+	}
+
+	httpHeader := ToHTTPHeader(mockHeader)
+
+	require.Len(t, httpHeader["Accept"], 1, "Accept should replay as one wire header")
+	require.Len(t, httpHeader["Accept-Encoding"], 1, "Accept-Encoding should replay as one wire header")
+	require.Len(t, httpHeader["Baggage"], 1, "Baggage should replay as one wire header")
+	assert.Equal(t, "application/json, text/plain, */*", httpHeader["Accept"][0])
+	assert.Equal(t, "gzip, compress, deflate, br", httpHeader["Accept-Encoding"][0])
+	assert.Equal(t, "trace-id=abc,user-key=def,env=test", httpHeader["Baggage"][0])
 }
 
 // TestParseHTTPRequest_And_Response_111 contains sub-tests for ParseHTTPRequest and
