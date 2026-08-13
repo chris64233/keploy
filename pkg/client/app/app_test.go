@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 
+	"go.keploy.io/server/v3/config"
+	"go.keploy.io/server/v3/pkg/models"
+	"go.keploy.io/server/v3/pkg/platform/docker"
 	"go.keploy.io/server/v3/utils"
 	"go.uber.org/zap"
 )
@@ -564,6 +568,41 @@ func TestComposeServiceStatesNoSource(t *testing.T) {
 	a := &App{logger: zap.NewNop()}
 	if states := a.composeServiceStates(context.Background()); states != nil {
 		t.Fatalf("composeServiceStates with no compose source = %+v, want nil", states)
+	}
+}
+
+func TestInMemoryComposeOneShotInitUsesFailureAbort(t *testing.T) {
+	composeYAML := []byte(`
+services:
+  db-migrate:
+    image: migrate:latest
+    restart: "no"
+    command: ["sh", "-c", "exit 0"]
+  api:
+    image: api:latest
+    container_name: api
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+`)
+	dockerClient, err := docker.New(zap.NewNop(), &config.Config{Path: t.TempDir()})
+	if err != nil {
+		t.Fatalf("new docker client: %v", err)
+	}
+	a := NewApp(zap.NewNop(), "docker compose up", dockerClient, models.SetupOptions{
+		Container:       "api",
+		InMemoryCompose: composeYAML,
+	})
+
+	if err := a.SetupCompose(nil); err != nil {
+		t.Fatalf("SetupCompose returned error: %v", err)
+	}
+	cmd := a.GetAppCommand()
+	if !strings.Contains(cmd, "--abort-on-container-failure") {
+		t.Fatalf("in-memory compose with one-shot init command = %q, want --abort-on-container-failure", cmd)
+	}
+	if strings.Contains(cmd, "--abort-on-container-exit") || strings.Contains(cmd, "--exit-code-from") {
+		t.Fatalf("in-memory compose with one-shot init command = %q, should not stop when the init exits 0", cmd)
 	}
 }
 
