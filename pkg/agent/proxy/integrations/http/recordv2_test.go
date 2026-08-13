@@ -279,6 +279,39 @@ func TestRecordV2_ChunkedTransferEncoding(t *testing.T) {
 	}
 }
 
+func TestBuildHTTPMock_TelemetryEgressIsNotRecorded(t *testing.T) {
+	t.Parallel()
+	h := &HTTP{Logger: zaptest.NewLogger(t)}
+	now := time.Unix(1_700_001_500, 0)
+	resp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+
+	for _, path := range []string{"/v1/traces", "/ingest"} {
+		t.Run(path, func(t *testing.T) {
+			req := []byte(
+				"POST " + path + " HTTP/1.1\r\n" +
+					"Host: telemetry.example\r\n" +
+					"Content-Type: application/x-protobuf\r\n" +
+					"Content-Length: 13\r\n" +
+					"\r\n" +
+					"trace-payload",
+			)
+
+			mock, err := h.buildHTTPMock(&FinalHTTP{
+				Req:              req,
+				Resp:             resp,
+				ReqTimestampMock: now,
+				ResTimestampMock: now.Add(time.Millisecond),
+			}, 4318, "telemetry-conn", models.OutgoingOptions{})
+			if err != nil {
+				t.Fatalf("buildHTTPMock returned error: %v", err)
+			}
+			if mock != nil {
+				t.Fatalf("telemetry egress %s should not be recorded as a mock", path)
+			}
+		})
+	}
+}
+
 // TestRecordV2_LegacyParity: the mock fields (URL/method/headers/body/
 // status) must match the legacy path for identical inputs. Timestamps
 // are allowed to differ (legacy uses time.Now(), V2 uses chunk times).
