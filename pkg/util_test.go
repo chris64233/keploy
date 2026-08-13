@@ -1,6 +1,8 @@
 package pkg
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.keploy.io/server/v3/pkg/models"
@@ -970,6 +973,29 @@ func TestCompressDecompress_AllEncodings_555(t *testing.T) {
 		decompressedData, err := Decompress(logger, "br", compressedData)
 		require.NoError(t, err)
 		assert.Equal(t, originalData, decompressedData)
+	})
+
+	t.Run("ContentEncodingSpellingIsNormalized", func(t *testing.T) {
+		originalData := []byte("same payload across record and replay")
+		for _, encoding := range []string{"GZIP", " gzip ", "BR", " br "} {
+			compressedData, err := Compress(logger, encoding, originalData)
+			require.NoError(t, err, "encoding %q", encoding)
+			assert.NotEqual(t, originalData, compressedData, "Compress should honor encoding %q", encoding)
+
+			var decompressedData []byte
+			switch strings.ToLower(strings.TrimSpace(encoding)) {
+			case "gzip":
+				reader, err := gzip.NewReader(bytes.NewReader(compressedData))
+				require.NoError(t, err, "encoding %q", encoding)
+				decompressedData, err = io.ReadAll(reader)
+				require.NoError(t, err, "encoding %q", encoding)
+				require.NoError(t, reader.Close(), "encoding %q", encoding)
+			case "br":
+				decompressedData, err = io.ReadAll(brotli.NewReader(bytes.NewReader(compressedData)))
+				require.NoError(t, err, "encoding %q", encoding)
+			}
+			assert.Equal(t, originalData, decompressedData, "encoding %q", encoding)
+		}
 	})
 
 	t.Run("UnknownEncoding", func(t *testing.T) {
