@@ -386,6 +386,69 @@ func TestUpsert_PlaceholderCleanedUpOnError(t *testing.T) {
 	}
 }
 
+func TestInsertTestCase_PropagatesAutoAssignedName(t *testing.T) {
+	parent := t.TempDir()
+	ts := NewWithNaming(zap.NewNop(), parent, NamingDescriptive)
+	testSetID := "propagation"
+
+	tc1 := httpTC("GET", "http://api.test/users")
+	if err := ts.InsertTestCase(t.Context(), tc1, testSetID, false); err != nil {
+		t.Fatalf("insert tc1: %v", err)
+	}
+	if tc1.Name != "get-users-1" {
+		t.Fatalf("tc1.Name not propagated; got=%q want=get-users-1", tc1.Name)
+	}
+
+	tc2 := httpTC("GET", "http://api.test/users")
+	if err := ts.InsertTestCase(t.Context(), tc2, testSetID, false); err != nil {
+		t.Fatalf("insert tc2: %v", err)
+	}
+	if tc2.Name != "get-users-2" {
+		t.Fatalf("tc2.Name not propagated; got=%q want=get-users-2", tc2.Name)
+	}
+	if tc1.Name == tc2.Name {
+		t.Fatalf("expected distinct names across two captures, got both %q", tc1.Name)
+	}
+
+	tc3 := httpTC("GET", "http://api.test/users")
+	tc3.Name = "custom-name"
+	if err := ts.InsertTestCase(t.Context(), tc3, testSetID, false); err != nil {
+		t.Fatalf("insert tc3: %v", err)
+	}
+	if tc3.Name != "custom-name" {
+		t.Fatalf("explicit tc.Name overwritten; got=%q want=custom-name", tc3.Name)
+	}
+}
+
+func TestInsertTestCase_DoesNotPropagateNameOnFailedWrite(t *testing.T) {
+	parent := t.TempDir()
+	ts := NewWithNaming(zap.NewNop(), parent, NamingDescriptive)
+	testSetID := "failed-write"
+	testSetDir := filepath.Join(parent, testSetID)
+	if err := os.MkdirAll(testSetDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testSetDir, "assets"), []byte("blocked"), 0o644); err != nil {
+		t.Fatalf("seed blocker: %v", err)
+	}
+
+	tc := &models.TestCase{
+		Kind: models.HTTP,
+		HTTPReq: models.HTTPReq{
+			Method: "GET",
+			URL:    "http://api.test/users",
+			Body:   strings.Repeat("x", LargeBodyThreshold+1),
+		},
+	}
+
+	if err := ts.InsertTestCase(t.Context(), tc, testSetID, false); err == nil {
+		t.Fatalf("expected InsertTestCase to fail when assets dir is blocked")
+	}
+	if tc.Name != "" {
+		t.Fatalf("tc.Name leaked on failed write; got=%q want empty", tc.Name)
+	}
+}
+
 func TestGenerateName_NewTestsetDir(t *testing.T) {
 	ts := NewWithNaming(zap.NewNop(), "", NamingDescriptive)
 	dir := filepath.Join(t.TempDir(), "fresh-testset", "tests")
