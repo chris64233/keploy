@@ -727,6 +727,65 @@ func TestExactBodyMatch_FormEncodedNoisyAcrossPositions(t *testing.T) {
 	}
 }
 
+func TestExactBodyMatch_FormEncodedDynamicSessionName(t *testing.T) {
+	h := newHTTP()
+	mocks := []*models.Mock{
+		{
+			Name:  "mock-sts",
+			Kind:  models.Kind(models.HTTP),
+			Noise: []string{"^WebIdentityToken=[^&]+$"},
+			Spec: models.MockSpec{
+				HTTPReq: &models.HTTPReq{
+					Body: "Action=AssumeRoleWithWebIdentity" +
+						"&RoleArn=arn%3Aaws%3Aiam%3A%3A308798440167%3Arole%2Fexample" +
+						"&RoleSessionName=botocore-session-1778513757" +
+						"&WebIdentityToken=recorded-jwt",
+				},
+			},
+		},
+	}
+
+	reqBody := []byte("Action=AssumeRoleWithWebIdentity" +
+		"&RoleArn=arn%3Aaws%3Aiam%3A%3A308798440167%3Arole%2Fexample" +
+		"&RoleSessionName=botocore-session-1778513766" +
+		"&WebIdentityToken=replay-jwt")
+
+	ok, match := h.ExactBodyMatch(reqBody, mocks)
+	if !ok {
+		t.Fatal("expected form body match when only the session name timestamp and token changed")
+	}
+	if match.Name != "mock-sts" {
+		t.Errorf("expected mock-sts, got %s", match.Name)
+	}
+}
+
+func TestExactBodyMatch_FormEncodedAccountIDStillStrict(t *testing.T) {
+	h := newHTTP()
+	mocks := []*models.Mock{
+		{
+			Name:  "mock-sts",
+			Kind:  models.Kind(models.HTTP),
+			Noise: []string{"^WebIdentityToken=[^&]+$"},
+			Spec: models.MockSpec{
+				HTTPReq: &models.HTTPReq{
+					Body: "Action=AssumeRoleWithWebIdentity" +
+						"&RoleArn=arn%3Aaws%3Aiam%3A%3A308798440167%3Arole%2Fexample" +
+						"&WebIdentityToken=recorded-jwt",
+				},
+			},
+		},
+	}
+
+	reqBody := []byte("Action=AssumeRoleWithWebIdentity" +
+		"&RoleArn=arn%3Aaws%3Aiam%3A%3A999999999999%3Arole%2Fexample" +
+		"&WebIdentityToken=replay-jwt")
+
+	ok, _ := h.ExactBodyMatch(reqBody, mocks)
+	if ok {
+		t.Fatal("expected no form body match when the 12 digit account id changed")
+	}
+}
+
 func TestExactBodyMatch_NoNoisePatterns(t *testing.T) {
 	h := newHTTP()
 	// Mock has no Noise patterns — second pass should skip it
