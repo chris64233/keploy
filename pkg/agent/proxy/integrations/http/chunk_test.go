@@ -95,6 +95,40 @@ func TestChunkedResponseExitsOnEOF(t *testing.T) {
 	}
 }
 
+func TestChunkedResponseExitsWhenTerminatorIsSuffixedToBody(t *testing.T) {
+	h := newTestHTTP()
+
+	clientConn := &mockConn{}
+	destConn := &mockConn{
+		data: []byte("5\r\nhello\r\n0\r\n\r\n"),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), contextTimeout)
+	defer cancel()
+
+	var finalResp []byte
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- h.chunkedResponse(ctx, &finalResp, clientConn, destConn)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+			t.Fatalf("chunkedResponse took %v after receiving body plus terminator in one read", elapsed)
+		}
+		if destConn.readCount != 1 {
+			t.Fatalf("expected chunkedResponse to stop after 1 read, got %d", destConn.readCount)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("chunkedResponse kept reading after receiving a chunked terminator suffix; reads=%d", destConn.readCount)
+	}
+}
+
 // TestChunkedResponseEmptyBody tests the specific case where the server closes
 // the connection immediately (no body). This reproduces the bug seen with Playwright
 // where the proxy gets stuck in a loop. Also verifies we don't do excessive reads.
