@@ -110,6 +110,60 @@ func TestMatch_BodyNoiseFromTestCase_124(t *testing.T) {
 	assert.True(t, result.BodyResult[0].Normal)
 }
 
+// TestMatch_SectionedBodyNoise_DoesNotDisableWholeBody is a regression test for
+// a silent false negative: a sectioned body-noise entry must only ignore the
+// listed paths, not the entire response body.
+func TestMatch_SectionedBodyNoise_DoesNotDisableWholeBody(t *testing.T) {
+	logger := zap.NewNop()
+	tc := &models.TestCase{
+		Name: "test-sectioned-body-noise",
+		HTTPResp: models.HTTPResp{
+			StatusCode: 200,
+			Body:       `{"items":[{"product":{"name":"Laptop","price":1200,"stock":99}}]}`,
+		},
+		Noise: map[string][]string{
+			"body": {"items.product.stock"},
+		},
+	}
+	actualResponse := &models.HTTPResp{
+		StatusCode: 200,
+		Body:       `{"items":[{"product":{"name":"Tablet","price":1999,"stock":100}}]}`,
+	}
+
+	pass, result := Match(tc, actualResponse, map[string]map[string][]string{}, false, false, logger, true)
+
+	assert.False(t, pass, "should fail: name and price differ and are not listed as noise")
+	require.NotNil(t, result)
+	assert.False(t, result.BodyResult[0].Normal)
+}
+
+// TestMatch_EmptySectionedBodyNoise_IgnoresWholeBody pins the sentinel meaning
+// of the bare key with an empty list, so the sectioned-noise fix cannot regress
+// the documented whole-body ignore behavior.
+func TestMatch_EmptySectionedBodyNoise_IgnoresWholeBody(t *testing.T) {
+	logger := zap.NewNop()
+	tc := &models.TestCase{
+		Name: "test-empty-sectioned-body-noise",
+		HTTPResp: models.HTTPResp{
+			StatusCode: 200,
+			Body:       `{"id":1,"name":"keploy"}`,
+		},
+		Noise: map[string][]string{
+			"body": {},
+		},
+	}
+	actualResponse := &models.HTTPResp{
+		StatusCode: 200,
+		Body:       `{"id":2,"name":"totally-different"}`,
+	}
+
+	pass, result := Match(tc, actualResponse, map[string]map[string][]string{}, false, false, logger, true)
+
+	assert.True(t, pass, "an empty list on the bare key still means ignore the whole body")
+	require.NotNil(t, result)
+	assert.True(t, result.BodyResult[0].Normal)
+}
+
 // TestMatch_RedirectToAssertionMatch_567 ensures that if a TestCase contains assertions,
 // the Match function correctly calls AssertionMatch and returns its result.
 func TestMatch_RedirectToAssertionMatch_567(t *testing.T) {
