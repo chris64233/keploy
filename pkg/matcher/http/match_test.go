@@ -110,6 +110,32 @@ func TestMatch_BodyNoiseFromTestCase_124(t *testing.T) {
 	assert.True(t, result.BodyResult[0].Normal)
 }
 
+func TestMatch_RegexBodyNoiseStillChecksUnexpectedValues(t *testing.T) {
+	logger := zap.NewNop()
+	tc := &models.TestCase{
+		Name: "test-regex-body-noise",
+		HTTPResp: models.HTTPResp{
+			StatusCode: 200,
+			Body:       `{"order":{"status":"PENDING","id":"ord-123"}}`,
+		},
+	}
+	actualResponse := &models.HTTPResp{
+		StatusCode: 200,
+		Body:       `{"order":{"status":"REFUNDED","id":"ord-123"}}`,
+	}
+	noiseConfig := map[string]map[string][]string{
+		"body": {
+			"status": {"^(PENDING|PAID)$"},
+		},
+	}
+
+	pass, result := Match(tc, actualResponse, noiseConfig, false, false, logger, true)
+
+	assert.False(t, pass, "a value outside the body-noise regex must still be reported")
+	require.NotNil(t, result)
+	assert.False(t, result.BodyResult[0].Normal)
+}
+
 // TestMatch_RedirectToAssertionMatch_567 ensures that if a TestCase contains assertions,
 // the Match function correctly calls AssertionMatch and returns its result.
 func TestMatch_RedirectToAssertionMatch_567(t *testing.T) {
